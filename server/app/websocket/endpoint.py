@@ -1,18 +1,24 @@
-"""FastAPI WebSocket endpoint for the Phase 2 transport protocol.
+"""FastAPI WebSocket endpoint for the transport protocol.
 
-Connection lifecycle
---------------------
+Connection lifecycle (Phase 3)
+------------------------------
 1. Validate Origin (before the upgrade is accepted).
-2. Validate the requested transport client identifier.
-3. Enforce connection limits.
-4. Accept, register, and send `connection.ready`.
-5. Drain any offline-queued messages for that identity.
-6. Serve the receive loop until disconnect, idle timeout, or close.
-7. Unregister, guaranteeing no stale registry entry survives.
+2. Enforce connection limits.
+3. Accept and register the connection as **unauthenticated**.
+4. Send `connection.ready` (authenticated: false).
+5. The client sends `auth.authenticate` with an access token. Until it does,
+   every privileged action is refused with `WS_1016_AUTH_REQUIRED`, and the
+   connection is closed if it does not authenticate within the deadline.
+6. On success the connection is re-keyed onto the account identity and
+   `auth.ready` is sent; queued messages for that account are drained.
+7. Serve the receive loop until disconnect, idle timeout, or close.
+8. Unregister, guaranteeing no stale registry entry survives.
 
-Sending is done exclusively by a writer task draining a bounded per-connection
-queue, so a slow reader cannot block routing for other connections or grow
-memory without limit.
+Why the token arrives in the first message rather than a header or a cookie:
+the browser WebSocket API cannot set headers, a query parameter would leak the
+token into logs, history and proxies (`AUTH-008`), and cookie-based WebSocket
+auth is precisely the pattern that makes cross-site WebSocket hijacking
+possible. A token in the first application message avoids all three.
 """
 
 from __future__ import annotations
@@ -29,16 +35,21 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from app.auth.errors import AuthError
+from app.auth.service import AuthenticatedIdentity, AuthService
 from app.websocket.errors import ProtocolErrorCode, WebSocketCloseCode, describe
 from app.websocket.manager import ConnectionContext, ConnectionManager, ConnectionRejected
 from app.websocket.protocol import (
     CLIENT_SENDABLE_TYPES,
+    PRIVILEGED_TYPES,
     PROTOCOL_VERSION,
+    UNAUTHENTICATED_SENDABLE_TYPES,
     WEBSOCKET_PATH,
     DeliveryStatus,
     MessageType,
 )
 from app.websocket.schemas import (
+    AuthReady,
     ConnectionReady,
     DeliveryAck,
     HeartbeatPong,
@@ -47,7 +58,6 @@ from app.websocket.schemas import (
     OutboundMessage,
     ProtocolError,
     QueueStatus,
-    is_valid_identifier,
 )
 
 logger = logging.getLogger("app.websocket")
@@ -57,18 +67,25 @@ router = APIRouter()
 #: How long to wait for queued outbound messages to flush before closing.
 _FLUSH_TIMEOUT_SECONDS = 2.0
 
+#: Maximum accepted length of an access token in an auth.authenticate payload.
+#: Bounds the work done before the token is even parsed.
+_MAX_TOKEN_LENGTH = 4096
+
 
 def _log(event: str, context: ConnectionContext | None = None, **fields: object) -> None:
     """Emit a structured transport event.
 
-    Message payload contents are never logged (LOG-001). Only correlation
-    identifiers and status fields are recorded, which is enough to debug
-    routing without exposing message content.
+    Message payloads, access tokens, and refresh tokens are never logged
+    (`LOG-001`, `LOG-002`). Only correlation identifiers and status fields.
     """
     record: dict[str, object] = {"event": event}
     if context is not None:
         record["connection_id"] = context.connection_id
-        record["transport_client_id"] = context.transport_client_id
+        record["authenticated"] = context.authenticated
+        if context.user_id is not None:
+            record["user_id"] = context.user_id
+        if context.session_id is not None:
+            record["session_id"] = context.session_id
     record.update(fields)
     logger.info(event, extra={"transport": record})
 
@@ -84,11 +101,7 @@ def _error(code: ProtocolErrorCode, message_id: UUID | None = None) -> dict[str,
 
 
 def _extract_message_id(raw: object) -> UUID | None:
-    """Best-effort message_id extraction for correlating a rejection.
-
-    Returns None unless the value is a genuinely well-formed UUID, so a
-    malformed message can never inject arbitrary text into an error response.
-    """
+    """Best-effort message_id extraction for correlating a rejection."""
     if not isinstance(raw, dict):
         return None
     candidate = raw.get("message_id")
@@ -107,12 +120,14 @@ async def _writer_loop(websocket: WebSocket, context: ConnectionContext) -> None
         try:
             await websocket.send_json(message)
         except (WebSocketDisconnect, RuntimeError):
-            # Socket already gone; stop writing. The receive loop owns cleanup.
             context.outbound.task_done()
             return
         finally:
             with suppress(ValueError):
                 context.outbound.task_done()
+
+
+# --- Routing --------------------------------------------------------------
 
 
 def _route_message(
@@ -123,14 +138,13 @@ def _route_message(
 ) -> DeliveryStatus:
     """Route a validated message to exactly one recipient identity.
 
-    The receipt's `sender` is taken from the connection context, never from the
-    envelope, so a delivered message always attributes the connection that
-    actually sent it (WS-011).
+    The receipt's `sender` is the connection's authenticated account identity,
+    never the envelope's `sender` field (`AUTHZ-002`, Assertion F).
     """
     receipt = _dump(
         MessageReceipt(
             message_id=envelope.message_id,
-            sender=context.transport_client_id,
+            sender=context.routing_identity,
             recipient=recipient,
             timestamp=envelope.timestamp,
             payload=envelope.payload,
@@ -146,7 +160,6 @@ def _route_message(
                 status=DeliveryStatus.DELIVERED.value,
             )
             return DeliveryStatus.DELIVERED
-        # Every candidate connection's outbound queue was saturated.
         _log(
             "message_rejected",
             context,
@@ -178,11 +191,11 @@ def _handle_message_send(
     context: ConnectionContext,
     envelope: InboundEnvelope,
 ) -> list[dict[str, Any]]:
-    """Validate and route a message.send, returning responses for the sender."""
-    # Sender spoofing: the envelope's sender is compared against the identity
-    # the server bound at connection time. A mismatch is rejected outright and
-    # never routed under the claimed identity (Assertion B / AUTHZ-002).
-    if envelope.sender != context.transport_client_id:
+    """Validate and route a message.send from an authenticated connection."""
+    # The envelope's sender is compared against the account identity bound at
+    # authentication time. A mismatch is refused and never routed under the
+    # claimed identity - an authenticated user cannot impersonate another.
+    if envelope.sender != context.routing_identity:
         _log(
             "message_rejected",
             context,
@@ -202,74 +215,138 @@ def _handle_message_send(
     return [_dump(DeliveryAck(message_id=envelope.message_id, status=status))]
 
 
-def _handle_inbound(
+def _handle_privileged(
     manager: ConnectionManager,
     context: ConnectionContext,
-    raw_text: str,
+    envelope: InboundEnvelope,
 ) -> list[dict[str, Any]]:
-    """Validate one inbound frame and produce the responses owed to the sender.
-
-    Ordering matters: cheap structural checks run before schema validation so
-    malformed input is discarded before any expensive work.
-    """
-    try:
-        parsed: object = json.loads(raw_text)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        _log("protocol_validation_failed", context, reason="invalid_json")
-        return [_error(ProtocolErrorCode.INVALID_JSON)]
-
-    if not isinstance(parsed, dict):
-        _log("protocol_validation_failed", context, reason="not_an_object")
-        return [_error(ProtocolErrorCode.SCHEMA_VALIDATION_FAILED)]
-
-    message_id = _extract_message_id(parsed)
-
-    # Version is checked before type so a client on an unsupported protocol
-    # gets an accurate version error rather than a confusing type error.
-    version = parsed.get("version")
-    if version != PROTOCOL_VERSION:
-        _log("protocol_validation_failed", context, reason="unsupported_version")
-        return [_error(ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, message_id)]
-
-    raw_type = parsed.get("type")
-    if not isinstance(raw_type, str) or raw_type not in set(MessageType):
-        _log("protocol_validation_failed", context, reason="unknown_type")
-        return [_error(ProtocolErrorCode.UNKNOWN_MESSAGE_TYPE, message_id)]
-
-    message_type = MessageType(raw_type)
-    if message_type not in CLIENT_SENDABLE_TYPES:
-        # Server-only types (e.g. connection.ready) must not be injectable.
-        _log("protocol_validation_failed", context, reason="server_only_type")
-        return [_error(ProtocolErrorCode.UNKNOWN_MESSAGE_TYPE, message_id)]
-
-    try:
-        envelope = InboundEnvelope.model_validate(parsed)
-    except ValidationError:
-        # Validation detail is deliberately not forwarded to the client: it
-        # would leak internal schema structure. It is not logged either,
-        # because it can echo payload content (LOG-001).
-        _log("protocol_validation_failed", context, reason="schema_validation_failed")
-        return [_error(ProtocolErrorCode.SCHEMA_VALIDATION_FAILED, message_id)]
-
+    """Dispatch an action that requires an authenticated connection."""
     if envelope.type is MessageType.MESSAGE_SEND:
         return _handle_message_send(manager, context, envelope)
-
-    if envelope.type is MessageType.HEARTBEAT_PING:
-        return [_dump(HeartbeatPong(message_id=envelope.message_id, server_time=datetime.now(UTC)))]
 
     if envelope.type is MessageType.QUEUE_STATUS:
         return [
             _dump(
                 QueueStatus(
                     message_id=envelope.message_id,
-                    queued_message_count=manager.offline_queue.count(context.transport_client_id),
+                    queued_message_count=manager.offline_queue.count(context.routing_identity),
                 )
             )
         ]
 
-    # Unreachable: CLIENT_SENDABLE_TYPES is exhaustively handled above. Kept as
-    # a fail-closed guard rather than falling through silently.
     return [_error(ProtocolErrorCode.INTERNAL_PROTOCOL_ERROR, envelope.message_id)]
+
+
+# --- Validation -----------------------------------------------------------
+
+
+def _validate_inbound(
+    context: ConnectionContext, raw_text: str
+) -> tuple[InboundEnvelope | None, list[dict[str, Any]]]:
+    """Validate one inbound frame.
+
+    Returns the envelope when it is acceptable, otherwise the errors owed to
+    the sender. Cheap structural checks run before schema validation so
+    malformed input is discarded before any expensive work.
+    """
+    try:
+        parsed: object = json.loads(raw_text)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        _log("protocol_validation_failed", context, reason="invalid_json")
+        return None, [_error(ProtocolErrorCode.INVALID_JSON)]
+
+    if not isinstance(parsed, dict):
+        _log("protocol_validation_failed", context, reason="not_an_object")
+        return None, [_error(ProtocolErrorCode.SCHEMA_VALIDATION_FAILED)]
+
+    message_id = _extract_message_id(parsed)
+
+    if parsed.get("version") != PROTOCOL_VERSION:
+        _log("protocol_validation_failed", context, reason="unsupported_version")
+        return None, [_error(ProtocolErrorCode.UNSUPPORTED_PROTOCOL_VERSION, message_id)]
+
+    raw_type = parsed.get("type")
+    if not isinstance(raw_type, str) or raw_type not in set(MessageType):
+        _log("protocol_validation_failed", context, reason="unknown_type")
+        return None, [_error(ProtocolErrorCode.UNKNOWN_MESSAGE_TYPE, message_id)]
+
+    message_type = MessageType(raw_type)
+    if message_type not in CLIENT_SENDABLE_TYPES:
+        _log("protocol_validation_failed", context, reason="server_only_type")
+        return None, [_error(ProtocolErrorCode.UNKNOWN_MESSAGE_TYPE, message_id)]
+
+    # Authorization gate: an unauthenticated connection may only authenticate
+    # or keep itself alive. This runs before schema validation so an
+    # unauthenticated peer learns nothing from the shape of its errors.
+    if not context.authenticated and message_type not in UNAUTHENTICATED_SENDABLE_TYPES:
+        _log("websocket_auth_required", context, attempted_type=message_type.value)
+        return None, [_error(ProtocolErrorCode.AUTH_REQUIRED, message_id)]
+
+    try:
+        envelope = InboundEnvelope.model_validate(parsed)
+    except ValidationError:
+        # Validation detail is neither returned nor logged: it would leak
+        # schema internals to the client and payload content to the log.
+        _log("protocol_validation_failed", context, reason="schema_validation_failed")
+        return None, [_error(ProtocolErrorCode.SCHEMA_VALIDATION_FAILED, message_id)]
+
+    return envelope, []
+
+
+# --- Authentication -------------------------------------------------------
+
+
+async def _authenticate_connection(
+    websocket: WebSocket,
+    manager: ConnectionManager,
+    context: ConnectionContext,
+    envelope: InboundEnvelope,
+) -> list[dict[str, Any]]:
+    """Handle auth.authenticate, binding a verified account to the connection."""
+    if context.authenticated:
+        return [_error(ProtocolErrorCode.ALREADY_AUTHENTICATED, envelope.message_id)]
+
+    raw_token = envelope.payload.get("access_token")
+    if not isinstance(raw_token, str) or not raw_token or len(raw_token) > _MAX_TOKEN_LENGTH:
+        _log("websocket_auth_failure", context, reason="missing_or_oversized_token")
+        return [_error(ProtocolErrorCode.AUTH_FAILED, envelope.message_id)]
+
+    service: AuthService = websocket.app.state.auth_service
+    factory = websocket.app.state.session_factory
+
+    try:
+        async with factory() as db:
+            identity: AuthenticatedIdentity = await service.resolve_access_token(db, raw_token)
+    except AuthError as exc:
+        # The specific reason (expired, revoked, malformed) is logged but not
+        # returned: the client gets one generic authentication failure.
+        _log("websocket_auth_failure", context, reason=exc.internal_reason or exc.code.value)
+        return [_error(ProtocolErrorCode.AUTH_FAILED, envelope.message_id)]
+
+    manager.bind_identity(
+        context,
+        user_id=identity.user_id,
+        username=identity.username,
+        session_id=identity.session_id,
+    )
+    _log("websocket_auth_success", context)
+
+    responses = [
+        _dump(
+            AuthReady(
+                message_id=envelope.message_id,
+                user_id=identity.user_id,
+                username=identity.username,
+                session_id=identity.session_id,
+            )
+        )
+    ]
+    # Deliver anything queued while this account was offline.
+    responses.extend(manager.offline_queue.drain(identity.username))
+    return responses
+
+
+# --- Receive loop ---------------------------------------------------------
 
 
 async def _receive_loop(
@@ -281,12 +358,21 @@ async def _receive_loop(
     limits = manager.limits
 
     while True:
+        # An unauthenticated connection gets a short deadline; an
+        # authenticated one gets the normal idle timeout.
+        timeout = (
+            limits.idle_timeout_seconds
+            if context.authenticated
+            else limits.unauthenticated_timeout_seconds
+        )
+
         try:
-            raw_text = await asyncio.wait_for(
-                websocket.receive_text(),
-                timeout=limits.idle_timeout_seconds,
-            )
+            raw_text = await asyncio.wait_for(websocket.receive_text(), timeout=timeout)
         except TimeoutError:
+            if not context.authenticated:
+                _log("websocket_auth_deadline_expired", context)
+                context.enqueue_outbound(_error(ProtocolErrorCode.AUTH_REQUIRED))
+                return WebSocketCloseCode.AUTH_REQUIRED
             _log("websocket_idle_timeout", context)
             context.enqueue_outbound(_error(ProtocolErrorCode.IDLE_TIMEOUT))
             return WebSocketCloseCode.IDLE_TIMEOUT
@@ -296,7 +382,6 @@ async def _receive_loop(
         now = time.monotonic()
         context.touch(now)
 
-        # Size is checked on the raw frame, before parsing (Assertion E).
         if len(raw_text.encode("utf-8")) > limits.max_message_bytes:
             _log("oversized_message_rejected", context, size_bytes=len(raw_text))
             context.enqueue_outbound(_error(ProtocolErrorCode.MESSAGE_TOO_LARGE))
@@ -307,10 +392,22 @@ async def _receive_loop(
             context.enqueue_outbound(_error(ProtocolErrorCode.RATE_LIMITED))
             continue
 
-        for response in _handle_inbound(manager, context, raw_text):
+        envelope, errors = _validate_inbound(context, raw_text)
+        if envelope is None:
+            responses = errors
+        elif envelope.type is MessageType.AUTH_AUTHENTICATE:
+            responses = await _authenticate_connection(websocket, manager, context, envelope)
+        elif envelope.type is MessageType.HEARTBEAT_PING:
+            responses = [
+                _dump(HeartbeatPong(message_id=envelope.message_id, server_time=datetime.now(UTC)))
+            ]
+        elif envelope.type in PRIVILEGED_TYPES:
+            responses = _handle_privileged(manager, context, envelope)
+        else:
+            responses = [_error(ProtocolErrorCode.INTERNAL_PROTOCOL_ERROR, envelope.message_id)]
+
+        for response in responses:
             if not context.enqueue_outbound(response):
-                # This connection's own outbound queue is saturated; stop
-                # rather than spin, and let the client reconnect.
                 _log("websocket_backpressure_close", context)
                 return WebSocketCloseCode.POLICY_VIOLATION
 
@@ -328,12 +425,11 @@ async def _reject_upgrade(
 
 @router.websocket(WEBSOCKET_PATH)
 async def websocket_transport(websocket: WebSocket) -> None:
-    """Phase 2 transport endpoint.
+    """Transport endpoint.
 
-    PHASE 2 LIMITATION: connections are NOT_AUTHENTICATED. The
-    `client_id` query parameter selects a TRANSPORT_TEST_IDENTITY only; it
-    proves nothing about who the peer is. Phase 3 replaces it with an
-    authenticated account/session identity.
+    Connections start unauthenticated and can do nothing privileged until they
+    present a valid access token via `auth.authenticate`. Account identity is
+    derived from that token server-side; the client never supplies it.
     """
     manager: ConnectionManager = websocket.app.state.ws_manager
     limits = manager.limits
@@ -349,21 +445,13 @@ async def websocket_transport(websocket: WebSocket) -> None:
         )
         return
 
-    # --- Transport identity ------------------------------------------------
-    requested = websocket.query_params.get("client_id")
-    transport_client_id = requested if requested is not None else uuid4().hex
-    if not is_valid_identifier(transport_client_id):
-        await _reject_upgrade(
-            websocket,
-            WebSocketCloseCode.INVALID_CLIENT_ID,
-            ProtocolErrorCode.INVALID_CLIENT_ID,
-        )
-        return
+    # A throwaway identifier so the registry has a key before authentication.
+    # It grants nothing: privileged actions are refused while unauthenticated.
+    provisional_id = f"anon-{uuid4().hex}"
 
-    # --- Connection limits (WS-005) ----------------------------------------
     remote_host = websocket.client.host if websocket.client is not None else None
     try:
-        context = manager.register(transport_client_id, remote_host=remote_host)
+        context = manager.register(provisional_id, remote_host=remote_host)
     except ConnectionRejected:
         await _reject_upgrade(
             websocket,
@@ -378,27 +466,19 @@ async def websocket_transport(websocket: WebSocket) -> None:
     close_code = WebSocketCloseCode.NORMAL
     writer = asyncio.create_task(_writer_loop(websocket, context))
     try:
-        queued = manager.offline_queue.drain(transport_client_id)
         context.enqueue_outbound(
             _dump(
                 ConnectionReady(
                     connection_id=context.connection_id,
-                    transport_client_id=transport_client_id,
+                    authentication_deadline_seconds=limits.unauthenticated_timeout_seconds,
                     heartbeat_interval_seconds=limits.heartbeat_interval_seconds,
                     idle_timeout_seconds=limits.idle_timeout_seconds,
                     max_message_bytes=limits.max_message_bytes,
-                    queued_message_count=len(queued),
                 )
             )
         )
-        for envelope in queued:
-            context.enqueue_outbound(envelope)
-
         close_code = await _receive_loop(websocket, manager, context)
     finally:
-        # Flush anything already queued, then tear the connection down. The
-        # registry entry is removed unconditionally so no stale record can
-        # survive a disconnect however it ended (Assertion F).
         context.mark_closing()
         with suppress(TimeoutError, asyncio.CancelledError):
             await asyncio.wait_for(context.outbound.join(), timeout=_FLUSH_TIMEOUT_SECONDS)

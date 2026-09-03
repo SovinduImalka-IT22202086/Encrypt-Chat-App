@@ -31,15 +31,16 @@ class ConnectionRejected(Exception):
 class ConnectionContext:
     """Per-connection transport state.
 
-    PHASE 2 LIMITATION
-    ------------------
-    `transport_client_id` is a TRANSPORT_TEST_IDENTITY. It is NOT_AUTHENTICATED
-    and is not an account identity. Phase 3 will bind WebSocket actions to an
-    authenticated account/session identity; `authenticated` and
-    `account_id` exist as the hook for that and must stay False/None until then.
+    PHASE 3
+    -------
+    A connection starts UNAUTHENTICATED with a server-generated
+    `transport_client_id` that grants no privileges. Once `authenticate()`
+    succeeds, `account_username` becomes the routing identity and
+    `user_id`/`session_id` are the trusted, server-derived account identity.
 
-    The server is authoritative over this mapping: it is established at
-    connection time and never updated from the contents of a client message.
+    The server is authoritative throughout: identity is set from a verified
+    access token and is never read from, or updated by, the contents of a
+    client message.
     """
 
     connection_id: str
@@ -49,13 +50,38 @@ class ConnectionContext:
     rate_limiter: RateLimiter
     last_activity_monotonic: float
 
-    # --- Phase 3 hook (do not populate in Phase 2) -------------------------
+    # --- Authenticated identity (set only by `authenticate()`) -------------
     authenticated: bool = False
-    account_id: str | None = None
+    user_id: str | None = None
+    account_username: str | None = None
+    session_id: str | None = None
 
     protocol_version: str = "1"
     remote_host: str | None = None
     _closing: bool = field(default=False, init=False)
+
+    def authenticate(self, *, user_id: str, username: str, session_id: str) -> None:
+        """Bind a verified account identity to this connection.
+
+        Called only after an access token has been validated against live
+        session state. Nothing here comes from a client-supplied field.
+        """
+        self.authenticated = True
+        self.user_id = user_id
+        self.account_username = username
+        self.session_id = session_id
+
+    @property
+    def routing_identity(self) -> str:
+        """The identity this connection sends and receives as.
+
+        After authentication this is the account username. Before it, the
+        unprivileged transport id - which cannot be used for messaging,
+        because privileged actions are refused while unauthenticated.
+        """
+        if self.account_username is not None:
+            return self.account_username
+        return self.transport_client_id
 
     def touch(self, now_monotonic: float) -> None:
         """Record inbound activity, resetting the idle timer."""
@@ -144,6 +170,33 @@ class ConnectionManager:
         self._by_client.setdefault(transport_client_id, set()).add(context.connection_id)
         return context
 
+    def bind_identity(
+        self, context: ConnectionContext, *, user_id: str, username: str, session_id: str
+    ) -> None:
+        """Re-key a live connection onto its authenticated account identity.
+
+        The registry is indexed by routing identity, so authentication has to
+        move the entry from the throwaway transport id to the account
+        username. Without this, messages addressed to the account would never
+        find the connection.
+        """
+        previous = context.routing_identity
+        context.authenticate(user_id=user_id, username=username, session_id=session_id)
+
+        existing = self._by_client.get(previous)
+        if existing is not None:
+            existing.discard(context.connection_id)
+            if not existing:
+                del self._by_client[previous]
+
+        self._by_client.setdefault(username, set()).add(context.connection_id)
+
+    def connections_for_session(self, session_id: str) -> list[ConnectionContext]:
+        """Every live connection bound to a given authentication session."""
+        return [
+            context for context in self._connections.values() if context.session_id == session_id
+        ]
+
     def unregister(self, connection_id: str) -> ConnectionContext | None:
         """Remove a connection from the registry.
 
@@ -156,11 +209,13 @@ class ConnectionManager:
             return None
 
         context.mark_closing()
-        client_connections = self._by_client.get(context.transport_client_id)
+        # Index by routing identity: an authenticated connection was re-keyed
+        # onto its account username by `bind_identity`.
+        client_connections = self._by_client.get(context.routing_identity)
         if client_connections is not None:
             client_connections.discard(connection_id)
             if not client_connections:
-                del self._by_client[context.transport_client_id]
+                del self._by_client[context.routing_identity]
         return context
 
     # --- Lookup ------------------------------------------------------------

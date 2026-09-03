@@ -30,6 +30,23 @@ argon2-cffi>=25.1,<26.0
 # used by the multi-client transport test.
 websockets>=15.0,<17.0
 
+# --- Authentication and persistence (Phase 3) --------------------------
+# Argon2id password hashing (argon2-cffi is pinned above as a runtime dep).
+# JWT access tokens, per-IP rate limiting, and account/session storage.
+#
+# DEVIATION (documented in docs/PHASE_3_EVIDENCE.md): the execution guide names
+# `python-jose[cryptography]`. It was installed, audited, and rejected because
+# it pulls in `ecdsa`, which carries CVE-2024-23342 (Minerva timing attack on
+# P-256) with **no fix version and no planned fix** - the project considers
+# side-channel attacks out of scope. PyJWT provides the HS256 signing this
+# phase needs, has no `ecdsa` dependency, and leaves pip-audit clean. Shipping
+# a known-unfixable cryptographic vulnerability would violate the Phase 3
+# dependency rule and the project's supply-chain requirements (SUPPLY-002).
+pyjwt>=2.10,<3.0
+slowapi>=0.1.9,<1.0
+sqlalchemy[asyncio]>=2.0,<3.0
+aiosqlite>=0.21,<1.0
+
 # --- Development / quality / security tooling --------------------------
 pytest>=9.1,<10.0
 pytest-asyncio>=1.0,<2.0

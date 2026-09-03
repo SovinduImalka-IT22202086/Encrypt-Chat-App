@@ -99,6 +99,10 @@ class TransportLimits:
     idle_timeout_seconds: float = 60.0
     heartbeat_interval_seconds: float = 20.0
 
+    # A connection that never authenticates is closed quickly: it can do
+    # nothing useful and holding it open only consumes a connection slot.
+    unauthenticated_timeout_seconds: float = 15.0
+
     # --- Origin policy (WS-002) --------------------------------------------
     allowed_origins: tuple[str, ...] = _DEFAULT_ORIGINS
     # Whether a connection with no Origin header is allowed. Browsers always
@@ -127,6 +131,7 @@ def default_limits() -> TransportLimits:
         max_queued_per_recipient=_int_env("WS_MAX_QUEUED_PER_RECIPIENT", 50),
         max_queued_recipients=_int_env("WS_MAX_QUEUED_RECIPIENTS", 500),
         idle_timeout_seconds=_float_env("WS_IDLE_TIMEOUT_SECONDS", 60.0),
+        unauthenticated_timeout_seconds=_float_env("WS_UNAUTHENTICATED_TIMEOUT_SECONDS", 15.0),
         heartbeat_interval_seconds=_float_env("WS_HEARTBEAT_INTERVAL_SECONDS", 20.0),
         allowed_origins=_origins_env("WS_ALLOWED_ORIGINS", _DEFAULT_ORIGINS),
     )

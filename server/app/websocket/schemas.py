@@ -16,10 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 from app.websocket.protocol import PROTOCOL_VERSION, DeliveryStatus, MessageType
 
-#: Transport client identifiers are deliberately restrictive: lowercase
-#: alphanumerics, dash and underscore. This keeps them safe to use as dict keys
-#: and log fields, and rules out control characters and homograph tricks.
-IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+#: Routing identifiers are deliberately restrictive: lowercase alphanumerics
+#: plus dot, dash and underscore. This keeps them safe as dict keys and log
+#: fields and rules out control characters and homograph tricks. It matches the
+#: account-identifier policy in `app.auth.identifiers`, so an authenticated
+#: username is always a valid routing identifier.
+IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 MAX_IDENTIFIER_LENGTH = 64
 
@@ -75,21 +77,42 @@ class OutboundMessage(BaseModel):
 class ConnectionReady(OutboundMessage):
     """Sent once, immediately after a connection is accepted and registered.
 
-    `authenticated` is always False in Phase 2 and is present specifically so
-    the client can never mistake a transport identity for an authenticated
-    account. Phase 3 owns changing it.
+    A newly accepted connection is always unauthenticated: `authenticated` is
+    False here by definition, and the client must send `auth.authenticate`
+    before any privileged action. Successful authentication is reported
+    separately by `auth.ready`.
     """
 
     type: Literal[MessageType.CONNECTION_READY] = MessageType.CONNECTION_READY
     connection_id: str
-    transport_client_id: str
     authenticated: Literal[False] = False
-    identity_status: Literal["TRANSPORT_TEST_IDENTITY"] = "TRANSPORT_TEST_IDENTITY"
+    identity_status: Literal["UNAUTHENTICATED"] = "UNAUTHENTICATED"
     protocol_version: Literal["1"] = PROTOCOL_VERSION
+    authentication_required: Literal[True] = True
+    authentication_deadline_seconds: float
     heartbeat_interval_seconds: float
     idle_timeout_seconds: float
     max_message_bytes: int
-    queued_message_count: int
+
+
+class AuthReady(OutboundMessage):
+    """Sent after a connection successfully authenticates.
+
+    `identity_verification_status` and `encryption_status` are pinned to
+    "not_implemented" so a client can never render an authenticated account as
+    a cryptographically verified or encrypted conversation. Account
+    authentication is not conversation identity (Phase 4) and not encryption
+    (Phase 6).
+    """
+
+    type: Literal[MessageType.AUTH_READY] = MessageType.AUTH_READY
+    message_id: UUID
+    authenticated: Literal[True] = True
+    user_id: str
+    username: str
+    session_id: str
+    identity_verification_status: Literal["not_implemented"] = "not_implemented"
+    encryption_status: Literal["not_implemented"] = "not_implemented"
 
 
 class MessageReceipt(OutboundMessage):

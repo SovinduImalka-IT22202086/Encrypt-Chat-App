@@ -30,6 +30,9 @@ class ProtocolErrorCode(StrEnum):
     IDLE_TIMEOUT = "WS_1013_IDLE_TIMEOUT"
     QUEUE_OVERFLOW = "WS_1014_QUEUE_OVERFLOW"
     INVALID_CLIENT_ID = "WS_1015_INVALID_CLIENT_ID"
+    AUTH_REQUIRED = "WS_1016_AUTH_REQUIRED"
+    AUTH_FAILED = "WS_1017_AUTH_FAILED"
+    ALREADY_AUTHENTICATED = "WS_1018_ALREADY_AUTHENTICATED"
 
 
 # Human-readable, non-sensitive descriptions returned alongside the code.
@@ -49,6 +52,9 @@ ERROR_DESCRIPTIONS: dict[ProtocolErrorCode, str] = {
     ProtocolErrorCode.IDLE_TIMEOUT: "Connection idle for too long.",
     ProtocolErrorCode.QUEUE_OVERFLOW: "Outgoing queue is full.",
     ProtocolErrorCode.INVALID_CLIENT_ID: "Transport client identifier is malformed.",
+    ProtocolErrorCode.AUTH_REQUIRED: "Authentication is required for this action.",
+    ProtocolErrorCode.AUTH_FAILED: "Authentication failed.",
+    ProtocolErrorCode.ALREADY_AUTHENTICATED: "Connection is already authenticated.",
 }
 
 
@@ -69,6 +75,8 @@ class WebSocketCloseCode:
     RATE_LIMITED = 4430
     IDLE_TIMEOUT = 4408
     INVALID_CLIENT_ID = 4400
+    AUTH_REQUIRED = 4401
+    AUTH_FAILED = 4402
 
 
 def describe(code: ProtocolErrorCode) -> str:

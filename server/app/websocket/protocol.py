@@ -26,10 +26,12 @@ class MessageType(StrEnum):
     MESSAGE_DELIVERY_ACK = "message.delivery_ack"
     HEARTBEAT_PONG = "heartbeat.pong"
     PROTOCOL_ERROR = "protocol.error"
+    AUTH_READY = "auth.ready"
 
     # Client -> server
     MESSAGE_SEND = "message.send"
     HEARTBEAT_PING = "heartbeat.ping"
+    AUTH_AUTHENTICATE = "auth.authenticate"
 
     # Client -> server (request) and server -> client (response)
     QUEUE_STATUS = "queue.status"
@@ -40,8 +42,28 @@ class MessageType(StrEnum):
 #: inject them.
 CLIENT_SENDABLE_TYPES: Final[frozenset[MessageType]] = frozenset(
     {
+        MessageType.AUTH_AUTHENTICATE,
         MessageType.MESSAGE_SEND,
         MessageType.HEARTBEAT_PING,
+        MessageType.QUEUE_STATUS,
+    }
+)
+
+#: Types an UNAUTHENTICATED connection may send. Everything else is refused
+#: with WS_1016_AUTH_REQUIRED until the connection authenticates (Phase 3).
+#: heartbeat is allowed so a client can hold the socket open while it obtains
+#: an access token.
+UNAUTHENTICATED_SENDABLE_TYPES: Final[frozenset[MessageType]] = frozenset(
+    {
+        MessageType.AUTH_AUTHENTICATE,
+        MessageType.HEARTBEAT_PING,
+    }
+)
+
+#: Actions that require an authenticated connection.
+PRIVILEGED_TYPES: Final[frozenset[MessageType]] = frozenset(
+    {
+        MessageType.MESSAGE_SEND,
         MessageType.QUEUE_STATUS,
     }
 )
