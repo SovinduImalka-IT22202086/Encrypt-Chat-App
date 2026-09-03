@@ -1,0 +1,37 @@
+# Direct backend dependencies (source of truth).
+#
+# requirements.txt is COMPILED from this file and contains fully pinned
+# transitive dependencies. Never edit requirements.txt by hand.
+#
+# Regenerate after changing this file:
+#   .venv\Scripts\Activate.ps1
+#   pip-compile requirements.in --output-file requirements.txt
+#   pip-sync requirements.txt          # optional: match env exactly
+#   pip-audit                          # required: audit before committing
+#
+# Upper bounds are set at the next major version so a compile picks up patch
+# and minor security fixes, while a breaking major bump is a deliberate,
+# reviewed change (SUPPLY-001).
+
+# --- Runtime -----------------------------------------------------------
+fastapi>=0.141,<1.0
+uvicorn[standard]>=0.52,<1.0
+pydantic>=2.13,<3.0
+
+# Cryptography libraries are installed as Phase 1 environment preparation
+# only. No cryptographic protocol is implemented in Phase 1 — see
+# docs/SECURITY_REQUIREMENTS.md (CRYPTO-001..011) for the requirements that
+# will govern their eventual use in Phases 5-7.
+cryptography>=50.0,<51.0
+argon2-cffi>=25.1,<26.0
+
+# --- Development / quality / security tooling --------------------------
+pytest>=9.1,<10.0
+# fastapi.testclient requires an HTTP client. Current starlette deprecates
+# httpx 0.x in favour of httpx2 and warns on import, so httpx2 is pinned here.
+httpx2>=2.12,<3.0
+ruff>=0.16,<0.17
+mypy>=2.3,<3.0
+pre-commit>=4.6,<5.0
+pip-audit>=2.10,<3.0
+pip-tools>=7.6,<8.0
