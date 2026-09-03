@@ -455,6 +455,26 @@ files   48 tracked
 
 The 13 pre-commit hooks ran during this commit and all passed.
 
+Subsequent Phase 1 commits (each with the hooks running and passing):
+
+```text
+5dfa40f chore: establish secure development baseline
+6c03a40 docs: record Phase 1 evidence and exit-gate result
+0f86082 fix(scripts): make check-all.ps1 parse and report correctly
+e6733c8 fix(pre-commit): stop mixed-line-ending fighting .gitattributes
+d9ac63d (committed by the repository owner; contains the issue-13 evidence
+        entry — note its subject line refers to check-all.ps1 while the diff
+        is docs/PHASE_1_EVIDENCE.md)
+```
+
+Working tree: clean.
+
+**Remote:** `origin` →
+`https://github.com/SovinduImalka-IT22202086/Encrypt-Chat-App.git`, added by the
+repository owner during the phase. `origin/master` is at `e6733c8`; local
+`master` is **1 commit ahead** (`d9ac63d` not yet pushed). No push was performed
+as part of this Phase 1 work — publishing to the remote is the owner's action.
+
 ---
 
 ## 16. Unresolved issues and open items
@@ -467,8 +487,9 @@ The 13 pre-commit hooks ran during this commit and all passed.
    installed but cannot start — "Virtual Machine Platform" / firmware
    virtualization is disabled. **No impact on Phase 1**; must be resolved
    before Phase 10/11 Linux-only tooling steps.
-4. **CI not yet executed.** No git remote exists, so the workflow has never
-   run. It is configuration, not demonstrated green CI.
+4. **CI not yet executed.** A GitHub remote was added by the repository owner
+   late in the phase, but the workflow has not yet run. It is committed
+   configuration, **not** demonstrated green CI, and is reported as such.
 5. **`react/no-danger` not yet enforced** (`CLIENT-001`) — requires
    `eslint-plugin-react` and actual message rendering; Phase 8.
 6. **starlette/anyio deprecation ignore** is a temporary, message-scoped
@@ -517,7 +538,7 @@ intervention.
 | Gitleaks runs | PASS (0 leaks in repo content) |
 | pip-audit runs | PASS (0 vulnerabilities) |
 | npm audit runs | PASS (0 vulnerabilities) |
-| Baseline CI exists | PASS (committed; not yet executed — no remote) |
+| Baseline CI exists | PASS (committed; first run still pending) |
 | README contains reproducible setup | PASS (verified by §14) |
 | CONTRIBUTING exists | PASS |
 | SECURITY exists | PASS |
