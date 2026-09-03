@@ -229,6 +229,8 @@ Recorded because they were real failures, not smooth sailing.
 | 8 | `pre-commit run --all-files` passed vacuously — every hook reported *"no files to check"* | pre-commit operates on git-tracked files; nothing was committed or staged yet | Staged all 48 files and re-ran, producing real results (see §10) |
 | 9 | `check-json` failed on `tsconfig.app.json` / `tsconfig.node.json` | TypeScript config files are JSONC; comments are valid there and are used by the Vite template. The hook is strict-JSON only | Excluded `^client/tsconfig.*\.json$` from that hook only. `tsc -b` validates those files instead |
 | 10 | Git warned LF→CRLF on 39 files, conflicting with the `mixed-line-ending --fix=lf` hook | No line-ending normalization policy | Added `.gitattributes` (`* text=auto eol=lf`, CRLF for `.ps1`/`.bat`/`.cmd`, binary markers) |
+| 11 | `scripts/check-all.ps1` failed to parse: *"The string is missing the terminator"* | Windows PowerShell 5.1 reads `.ps1` using the system ANSI codepage unless the file has a UTF-8 BOM. Two em-dashes decoded into a stray quote character, unbalancing a string | Made the script pure ASCII and documented the constraint in its `.NOTES` block |
+| 12 | `check-all.ps1` reported 7 false failures (pip-audit, all npm checks, Gitleaks) while the same commands passed when run directly | Two causes: `$ErrorActionPreference = 'Stop'` promoted benign native-command **stderr** into terminating errors (pip-audit writes its success line to stderr), and `Set-StrictMode -Version Latest` broke npm's PowerShell shim (*"The property 'Statement' cannot be found"*) | Rewrote the runner to judge success **solely by process exit code**, dropped StrictMode, set `ErrorActionPreference = 'Continue'`, and invoked `npm.cmd` directly instead of the shim |
 
 **No check was disabled or weakened to obtain a green result.** The two
 scoping decisions (items 6, 7, 9) narrow *where* a check applies or which
@@ -291,6 +293,24 @@ Detect hardcoded secrets.................................................Passed
 
 These same 13 hooks ran again automatically as part of the Phase 1 commit and
 passed.
+
+### Helper script validation
+
+`scripts/check-all.ps1` was executed end-to-end (it is a shipped deliverable,
+so it was tested rather than assumed to work). After the two fixes recorded as
+issues 11 and 12 above:
+
+```text
+PASS: Ruff (lint)        PASS: ESLint
+PASS: Ruff (format)      PASS: TypeScript
+PASS: mypy               PASS: Vitest
+PASS: pytest             PASS: Frontend build
+PASS: pip-audit          PASS: npm audit
+                         PASS: Gitleaks
+
+ALL CHECKS PASSED.
+SCRIPT_EXIT=0
+```
 
 ---
 
