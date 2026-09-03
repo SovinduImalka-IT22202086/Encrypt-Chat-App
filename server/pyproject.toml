@@ -62,6 +62,10 @@ show_error_codes = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
+# Async tests are opt-in via @pytest.mark.asyncio (strict mode), so a plain
+# `async def` that is never awaited fails loudly instead of silently passing.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 # Warnings are errors so deprecations in OUR code fail the build rather than
 # accumulating silently. Exceptions below are narrowly scoped to a specific
 # third-party message and must be re-checked when dependencies are upgraded.

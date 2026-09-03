@@ -1,16 +1,15 @@
 import './App.css'
+import TransportTester from './transport/TransportTester'
 
 /**
- * Phase 1 development placeholder.
+ * Phase 2 development placeholder.
  *
- * SCOPE WARNING: this component intentionally implements no chat UI, no
- * authentication UI, no contacts, no WebSocket logic, and no cryptographic
- * UX. It exists only to prove that the React + TypeScript + Vite toolchain,
- * ESLint, Vitest, and the production build all work.
+ * SCOPE WARNING: this component implements no chat UI, no authentication UI,
+ * no contacts, and no cryptographic UX. It hosts the Phase 2 transport test
+ * panel, which is a protocol debugging tool - not the chat application.
  */
 function App() {
   const notImplemented = [
-    'WebSocket transport',
     'Authentication',
     'Identity verification',
     'Key agreement',
@@ -22,13 +21,14 @@ function App() {
   return (
     <main className="app">
       <h1>Encrypted Chat Application</h1>
-      <p className="phase">Development scaffold — Phase 1</p>
+      <p className="phase">Development scaffold — Phase 2 (transport only)</p>
 
       <section aria-labelledby="status-heading">
         <h2 id="status-heading">Current security status</h2>
         <p>
-          This build contains <strong>no encrypted messaging functionality</strong>. It is a
-          development environment scaffold only and has not been security audited.
+          This build contains <strong>no encrypted messaging functionality</strong>. The
+          WebSocket transport below routes plaintext test payloads and has not been
+          security audited.
         </p>
         <ul>
           {notImplemented.map((item) => (
@@ -38,6 +38,8 @@ function App() {
           ))}
         </ul>
       </section>
+
+      <TransportTester />
     </main>
   )
 }

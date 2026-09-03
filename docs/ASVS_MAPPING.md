@@ -12,7 +12,13 @@ areas, without formally claiming Level 3 overall).
 - `OUT_OF_SCOPE` — explicitly excluded per `THREAT_MODEL.md §15`.
 - `BLOCKED` — cannot be defined until an open decision (see `SECURITY_ASSUMPTIONS.md`) resolves.
 
-No item is marked `IMPLEMENTED`. No code exists yet.
+The table below is the **Phase 0 requirement baseline**, recorded before any
+code existed, and is kept unchanged as the original contract. No item in it is
+marked implemented.
+
+Implementation status as controls are actually built is tracked in the
+per-phase sections appended at the end of this document — currently
+[Phase 2 implementation status](#phase-2-implementation-status-websocket-transport).
 
 | Internal Requirement | Security Objective | ASVS Area (5.0.0) | Target Level | Planned Phase | Verification | Status |
 |---|---|---|---|---|---|---|
@@ -83,3 +89,40 @@ No item is marked `IMPLEMENTED`. No code exists yet.
    in [SECURITY_ASSUMPTIONS.md](SECURITY_ASSUMPTIONS.md).
 3. Single-vs-multi-device identity mapping (`IDENTITY-004`) is `BLOCKED` for
    the same reason.
+
+---
+
+## Phase 2 implementation status (WebSocket transport)
+
+Added at the end of Phase 2. The Phase 0 table above records the *requirement*
+baseline and is unchanged; this section records what has since been built and
+verified. Statuses are evidence-based — see
+[PHASE_2_EVIDENCE.md](PHASE_2_EVIDENCE.md) and the `server/tests/test_websocket_*`
+suites.
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| WS-002 (Origin allowlist) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_origin.py` (14 tests), incl. a real-handshake HTTP 403 |
+| WS-003 (strict schema validation) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_schema.py` (44 tests) |
+| WS-004 (max message size) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_limits.py`, incl. an exact-boundary test |
+| WS-005 (connection limits) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_connection.py`, `test_websocket_limits.py` |
+| WS-006 (idle timeout, heartbeat) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_lifecycle.py` |
+| WS-007 (backpressure) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Bounded outbound queue + writer task; `test_websocket_limits.py` |
+| WS-008 (message rate limit) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Fixed-window limiter; `test_websocket_limits.py` |
+| WS-009 (deterministic errors) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | 15 stable codes; leak-check test in `test_websocket_schema.py` |
+| WS-010 (direct routing, no broadcast) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_routing.py`, plus a real-socket no-broadcast test |
+| WS-011 (sender bound to connection) | `PARTIALLY_IMPLEMENTED` | Bound to the **transport** identity and tested (`test_websocket_spoofing.py`). Binding to an *authenticated* identity is `PLANNED_PHASE_3` |
+| WS-001 (authenticated WebSocket) | `PLANNED_PHASE_3` | Not implemented. `ConnectionContext.authenticated` is a placeholder fixed at `False` |
+| WS-012 (ciphertext-only queue) | `PLANNED_PHASE_6` | Queue abstraction exists and never inspects `payload`, so Phase 6 can substitute ciphertext without restructuring |
+| WS-013 (WSS mandatory in production) | `PLANNED_PHASE_10` | Development uses `ws://`; deployment hardening is Phase 10 |
+| AUTHZ-002 (sender not from payload) | `PARTIALLY_IMPLEMENTED` | Enforced at transport level; authenticated identity `PLANNED_PHASE_3` |
+| AUTHZ-003 (no private-message broadcast) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Assertion A tested in-process and over real sockets |
+| AVAIL-001 (bounded connection cost) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Global and per-identity connection caps |
+| AVAIL-002 (bounded message cost) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Per-connection rate limiter |
+| AVAIL-003 (bounded work for low-trust actors) | `PARTIALLY_IMPLEMENTED` | Size and rate checks run before parsing; no expensive crypto exists yet to bound |
+| AVAIL-004 (bounded storage growth) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Offline queue bounded per recipient and in recipient count |
+| LOG-001 (no plaintext in logs) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | `test_websocket_logging.py` scans captured records for a payload marker |
+| LOG-003 (structured logs) | `IMPLEMENTED_PHASE_2` / `TESTED_PHASE_2` | Structured `transport` extra; field set asserted |
+| SERVER-002 (no plaintext in database) | `IMPLEMENTED_PHASE_2` (vacuously) | No database exists. Guard tests assert the transport imports no persistence library and writes no files |
+| INTEGRITY-002 (replay resistance) | `PLANNED_PHASE_7` | **Not implemented.** `message_id` exists so replay/deduplication can be built on it; no replay resistance exists today |
+| CRYPTO-*, E2EE-*, IDENTITY-*, AUTH-* | `REQUIREMENT_DEFINED` (unchanged) | Phase 2 implements no cryptography, identity, or authentication |

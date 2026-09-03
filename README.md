@@ -5,8 +5,9 @@ strict phase order so that every implementation decision can be reviewed
 against a threat model written before any code existed.
 
 > **⚠️ This project does not yet implement encrypted messaging.**
-> Phase 1 establishes the development environment and repository only. There is
-> no working chat, no authentication, and no cryptography. See
+> Phase 2 adds a WebSocket transport layer that routes **plaintext** test
+> payloads between unauthenticated transport identities. There is no
+> authentication and no cryptography. See
 > [Current security status](#current-security-status).
 
 ---
@@ -20,7 +21,10 @@ Phase 0 — COMPLETE
 Phase 1 — COMPLETE
   Secure repository and development environment.
 
-WebSocket Transport        — NOT IMPLEMENTED
+Phase 2 — COMPLETE
+  WebSocket transport infrastructure (routing/protocol only).
+
+WebSocket Transport        — IMPLEMENTED (transport only, unauthenticated)
 Authentication             — NOT IMPLEMENTED
 Identity Verification      — NOT IMPLEMENTED
 Key Agreement              — NOT IMPLEMENTED
@@ -34,6 +38,9 @@ Independent Security Audit — NOT PERFORMED
 The `cryptography` and `argon2-cffi` packages are installed as environment
 preparation. **Their presence does not mean any cryptography is implemented.**
 
+The WebSocket transport carries plaintext payloads and does not verify who a
+peer is. Do not use it for anything real.
+
 ---
 
 ## Security-first roadmap
@@ -42,7 +49,7 @@ preparation. **Their presence does not mean any cryptography is implemented.**
 |---|---|---|
 | 0 | Security requirements & threat model | COMPLETE |
 | 1 | Secure development environment & repository | COMPLETE |
-| 2 | WebSocket transport infrastructure | Not started |
+| 2 | WebSocket transport infrastructure | COMPLETE |
 | 3 | Authentication & account security | Not started |
 | 4 | Identity & trust | Not started |
 | 5 | Authenticated X25519 key agreement | Not started |
@@ -146,12 +153,68 @@ pre-commit run --all-files
 gitleaks dir . --config .gitleaks.toml --verbose
 ```
 
-Run the development servers (optional, Phase 1 scaffold only):
+Run the development servers:
 
 ```powershell
-cd server; .venv\Scripts\Activate.ps1; uvicorn app.main:app --reload   # http://127.0.0.1:8000/health
-cd client; npm run dev                                                 # http://127.0.0.1:5173
+cd server
+.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000
 ```
+
+```powershell
+cd client
+npm run dev
+```
+
+The backend serves `http://127.0.0.1:8000/health` and the WebSocket transport at
+`ws://127.0.0.1:8000/ws/v1`. The frontend runs on `http://localhost:5173`.
+
+---
+
+## WebSocket transport (Phase 2)
+
+```text
+Endpoint:          ws://127.0.0.1:8000/ws/v1?client_id=<transport-identity>
+Protocol version:  1
+Protocol document: docs/WEBSOCKET_PROTOCOL.md
+```
+
+**Origin requirement.** The server enforces an Origin allowlist on the
+WebSocket upgrade; a disallowed Origin is refused with HTTP 403. Development
+defaults are `http://localhost:5173` and `http://127.0.0.1:5173`, so the Vite
+dev server works out of the box. Override with `WS_ALLOWED_ORIGINS`
+(comma-separated). A literal `*` is discarded, never honoured. Non-browser
+clients that send no Origin header are allowed in development.
+
+Open the frontend and use the **Development Transport Test** panel to connect,
+send a test message, and watch acknowledgements. Run two browser tabs with
+different transport client IDs to see direct routing.
+
+Run the Phase 2 tests:
+
+```powershell
+cd server
+.venv\Scripts\Activate.ps1
+pytest tests/test_websocket_connection.py tests/test_websocket_routing.py tests/test_websocket_schema.py tests/test_websocket_spoofing.py tests/test_websocket_origin.py tests/test_websocket_limits.py tests/test_websocket_lifecycle.py tests/test_websocket_logging.py tests/test_websocket_multiclient.py
+```
+
+Or simply `pytest` for the whole suite.
+
+### Phase 2 security limitations
+
+```text
+Authentication:              NOT IMPLEMENTED — Phase 3
+Cryptographic identity:      NOT IMPLEMENTED — Phase 4
+Authenticated key agreement: NOT IMPLEMENTED — Phase 5
+End-to-end encryption:       NOT IMPLEMENTED — Phase 6
+Forward-secrecy ratchet:     NOT IMPLEMENTED — Phase 7
+Replay protection:           NOT IMPLEMENTED — Phase 7
+```
+
+Connections are `TRANSPORT_TEST_IDENTITY` / `NOT_AUTHENTICATED`: the
+`client_id` parameter is a label, not a credential. Message payloads travel in
+plaintext and the offline queue is bounded, in-memory, and lost on restart —
+no durable message persistence exists.
 
 ---
 
@@ -175,14 +238,16 @@ pip-audit -r requirements.txt
 
 ```text
 .
-├── client/              React + TypeScript + Vite frontend (scaffold only)
-├── server/              FastAPI backend (scaffold only)
+├── client/              React + TypeScript + Vite frontend
+│   └── src/transport/   Development transport test client
+├── server/              FastAPI backend
 │   ├── app/             Application package
+│   │   └── websocket/   Phase 2 transport layer
 │   ├── tests/           Backend tests
 │   ├── requirements.in  Direct dependencies (edit this)
 │   ├── requirements.txt Compiled pinned lock (generated)
 │   └── pyproject.toml   Ruff / mypy / pytest configuration
-├── protocol/            Reserved: shared protocol definitions (Phase 2+)
+├── protocol/            Reserved: shared protocol definitions
 ├── tests/               Reserved: cross-cutting/integration tests (Phase 2+)
 ├── deploy/              Reserved: deployment configuration (Phase 10)
 ├── scripts/             Developer utility scripts
@@ -192,13 +257,17 @@ pip-audit -r requirements.txt
 │   ├── DATA_FLOW_DIAGRAM.md
 │   ├── ASVS_MAPPING.md
 │   ├── SECURITY_ASSUMPTIONS.md
+│   ├── WEBSOCKET_PROTOCOL.md
 │   ├── PHASE_0_EVIDENCE.md
-│   └── PHASE_1_EVIDENCE.md
+│   ├── PHASE_1_EVIDENCE.md
+│   └── PHASE_2_EVIDENCE.md
 └── .github/workflows/   CI
 ```
 
 `protocol/`, `tests/`, and `deploy/` are intentionally empty placeholders —
-populating them is the job of later phases.
+populating them is the job of later phases. The Phase 2 protocol lives in
+`server/app/websocket/` and is documented in
+[docs/WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md).
 
 ---
 
@@ -209,6 +278,7 @@ populating them is the job of later phases.
 - [Data flow diagram](docs/DATA_FLOW_DIAGRAM.md)
 - [ASVS 5.0.0 mapping](docs/ASVS_MAPPING.md)
 - [Security assumptions & invariants](docs/SECURITY_ASSUMPTIONS.md)
+- [WebSocket protocol](docs/WEBSOCKET_PROTOCOL.md) — envelope, error codes, limits, Phase 2 limitations
 - [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 Phase 0 documentation is **authoritative** for all future design decisions.

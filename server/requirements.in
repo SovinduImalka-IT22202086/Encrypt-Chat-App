@@ -25,8 +25,14 @@ pydantic>=2.13,<3.0
 cryptography>=50.0,<51.0
 argon2-cffi>=25.1,<26.0
 
+# WebSocket transport (Phase 2). uvicorn[standard] already pulls a WebSocket
+# implementation for the server side; this pin is for the standalone client
+# used by the multi-client transport test.
+websockets>=15.0,<17.0
+
 # --- Development / quality / security tooling --------------------------
 pytest>=9.1,<10.0
+pytest-asyncio>=1.0,<2.0
 # fastapi.testclient requires an HTTP client. Current starlette deprecates
 # httpx 0.x in favour of httpx2 and warns on import, so httpx2 is pinned here.
 httpx2>=2.12,<3.0

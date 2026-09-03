@@ -143,6 +143,10 @@ pyproject-hooks==1.2.0
     #   build
     #   pip-tools
 pytest==9.1.1
+    # via
+    #   -r requirements.in
+    #   pytest-asyncio
+pytest-asyncio==1.4.0
     # via -r requirements.in
 python-discovery==1.6.0
     # via virtualenv
@@ -192,8 +196,10 @@ virtualenv==21.7.8
     # via pre-commit
 watchfiles==1.2.0
     # via uvicorn
-websockets==17.1
-    # via uvicorn
+websockets==16.1.1
+    # via
+    #   -r requirements.in
+    #   uvicorn
 wheel==0.48.0
     # via pip-tools
 

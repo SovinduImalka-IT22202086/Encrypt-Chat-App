@@ -13,6 +13,79 @@ versioned by development phase.
 
 ## [Unreleased]
 
+### Phase 2 — WebSocket transport infrastructure (2026-09-03)
+
+**Added**
+
+- WebSocket transport endpoint at `/ws/v1` with a versioned protocol (v1).
+- Connection manager owning all live transport state on `app.state`, with
+  registration, direct recipient lookup, and unconditional cleanup on
+  disconnect.
+- Strict, versioned Pydantic message envelope (`version`, `message_id`, `type`,
+  `sender`, `recipient`, `timestamp`, `payload`) that rejects unknown fields.
+- Explicit message-type allowlist; unknown and server-only types are rejected
+  rather than ignored.
+- Direct recipient routing with a delivery-acknowledgement flow
+  (`delivered` / `queued` / `recipient_unavailable` / `rejected`).
+- Transport-level sender binding: the server derives sender identity from the
+  connection and refuses envelopes whose `sender` does not match.
+- Bounded in-memory offline queue abstraction, drained on reconnect. It never
+  inspects payloads, so Phase 6 can substitute ciphertext without
+  restructuring it.
+- WebSocket Origin allowlist enforced before the upgrade is accepted; a
+  wildcard allowlist is discarded rather than honoured.
+- Resource controls: application message-size cap, global and per-identity
+  connection limits, per-connection fixed-window message rate limit, bounded
+  per-connection outbound queue with a dedicated writer task (backpressure),
+  and bounded offline-queue growth.
+- Application-level heartbeat (`heartbeat.ping`/`heartbeat.pong`) and idle
+  timeout with registry cleanup.
+- 15 deterministic, non-sensitive protocol error codes.
+- Structured transport logging that records correlation identifiers and never
+  message content.
+- 149 backend transport tests covering connection lifecycle, routing,
+  no-broadcast, sender spoofing, schema validation, Origin policy, resource
+  limits, heartbeat/idle, logging hygiene, and a multi-client suite driving a
+  real uvicorn server over real sockets.
+- Frontend **Development Transport Test** panel (connect/disconnect, send a
+  test message, view acknowledgements and received messages), explicitly
+  labelled "Not Authenticated" and "Not End-to-End Encrypted", with 8 tests.
+- `docs/WEBSOCKET_PROTOCOL.md` documenting the endpoint, envelope, message
+  types, acknowledgement semantics, queue behaviour, limits, Origin policy,
+  error codes, reconnect behaviour, and Phase 2 limitations.
+- `docs/PHASE_2_EVIDENCE.md` recording actual command output and results.
+
+**Changed**
+
+- `app/main.py` refactored to a `create_app(limits)` factory so transport
+  limits are injectable and each app instance owns isolated state.
+- Health endpoint now reports `"phase": "2"`.
+- Phase 2 implementation status appended to `docs/ASVS_MAPPING.md`; the
+  Phase 0 requirement baseline table is unchanged.
+
+**Dependencies**
+
+- Added `websockets` 16.1.1 (standalone client for the multi-client test) and
+  `pytest-asyncio` 1.4.0. Lock recompiled to 74 pinned packages.
+
+**Security**
+
+- Private messages are routed only to the intended recipient and are never
+  broadcast; verified in-process and over real sockets.
+- Client-supplied `sender` is never treated as authoritative.
+- No durable plaintext message persistence was introduced. Guard tests assert
+  the transport package imports no persistence library and writes no files.
+- Message payloads are never written to logs; verified by scanning captured
+  log records for a payload marker.
+
+**Not implemented** (deliberately, per phase gating): authentication, sessions
+or tokens, cryptographic identity, key agreement, end-to-end encryption,
+ratcheting, cryptographic replay protection, encrypted local storage, and
+production deployment hardening. Transport identities are
+`TRANSPORT_TEST_IDENTITY` / `NOT_AUTHENTICATED` and payloads are plaintext.
+
+---
+
 ### Phase 1 — Secure development environment & repository (2026-09-03)
 
 **Added**

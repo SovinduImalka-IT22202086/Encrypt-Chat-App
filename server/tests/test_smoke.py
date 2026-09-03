@@ -1,8 +1,8 @@
-"""Phase 1 infrastructure smoke tests.
+"""Application smoke tests.
 
-These verify that the development environment works (imports, ASGI app,
-pytest configuration). They are NOT tests of application functionality —
-no Phase 2+ functionality exists to test.
+These verify the base application wiring: package imports, the ASGI app
+object, and the health endpoint. WebSocket transport behaviour is covered by
+the test_websocket_* suites.
 """
 
 from fastapi.testclient import TestClient
@@ -30,7 +30,7 @@ def test_health_endpoint_returns_expected_payload() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "phase": "1",
+        "phase": "2",
         "encrypted_messaging": "not_implemented",
     }
 

@@ -24,6 +24,6 @@ describe('App (Phase 1 scaffold)', () => {
     render(<App />)
     // Exact string match so only the status <span> elements match, not their
     // ancestors (whose textContent also contains the phrase).
-    expect(screen.getAllByText('NOT IMPLEMENTED')).toHaveLength(7)
+    expect(screen.getAllByText('NOT IMPLEMENTED')).toHaveLength(6)
   })
 })
