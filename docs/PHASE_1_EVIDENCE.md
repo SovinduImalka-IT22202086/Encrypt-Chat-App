@@ -231,9 +231,13 @@ Recorded because they were real failures, not smooth sailing.
 | 10 | Git warned LF→CRLF on 39 files, conflicting with the `mixed-line-ending --fix=lf` hook | No line-ending normalization policy | Added `.gitattributes` (`* text=auto eol=lf`, CRLF for `.ps1`/`.bat`/`.cmd`, binary markers) |
 | 11 | `scripts/check-all.ps1` failed to parse: *"The string is missing the terminator"* | Windows PowerShell 5.1 reads `.ps1` using the system ANSI codepage unless the file has a UTF-8 BOM. Two em-dashes decoded into a stray quote character, unbalancing a string | Made the script pure ASCII and documented the constraint in its `.NOTES` block |
 | 12 | `check-all.ps1` reported 7 false failures (pip-audit, all npm checks, Gitleaks) while the same commands passed when run directly | Two causes: `$ErrorActionPreference = 'Stop'` promoted benign native-command **stderr** into terminating errors (pip-audit writes its success line to stderr), and `Set-StrictMode -Version Latest` broke npm's PowerShell shim (*"The property 'Statement' cannot be found"*) | Rewrote the runner to judge success **solely by process exit code**, dropped StrictMode, set `ErrorActionPreference = 'Continue'`, and invoked `npm.cmd` directly instead of the shim |
+| 13 | A **fresh clone** failed `pre-commit run --all-files` (`scripts/check-all.ps1: fixed mixed line endings`) even though the development tree passed | `.gitattributes` checks `.ps1` files out as CRLF so they run reliably on Windows, while the `mixed-line-ending --fix=lf` hook rewrote them to LF — the two policies contradicted each other. Only reproducible from a clean clone, not in the working tree | Excluded `.ps1`/`.bat`/`.cmd` from that hook. Re-verified by cloning again: all 13 hooks pass and the clone's tree is left unmodified |
 
-**No check was disabled or weakened to obtain a green result.** The two
-scoping decisions (items 6, 7, 9) narrow *where* a check applies or which
+Issue 13 is the reason the exit gate was tested against a real clone rather
+than the working tree: it was invisible from the development directory.
+
+**No check was disabled or weakened to obtain a green result.** The
+scoping decisions (items 6, 7, 9, 13) narrow *where* a check applies or which
 specific third-party message is tolerated; each is commented in-file with its
 reason.
 
