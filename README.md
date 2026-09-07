@@ -1135,19 +1135,8 @@ evidence behind it are in scope and are genuinely welcome.
 
 ## License
 
-**Not yet decided — this is a release blocker for public distribution.**
-
 ```text
 LICENSE DECISION: REQUIRED
 STATUS: UNRESOLVED — MANUAL ACTION REQUIRED (project owner)
 ```
 
-No license file has been added because the licensing choice belongs to the
-project owner, and picking one on their behalf would be a legal decision made
-by the wrong party. **Until a license is chosen, default copyright applies:
-the code carries no grant of reuse rights, and recipients of a public release
-would have no right to use, modify, or redistribute it.**
-
-Choose one and add a `LICENSE` file before publishing. Common choices for a
-project of this kind are MIT, Apache-2.0 (which also grants patent rights), or
-AGPL-3.0 (which requires network-deployed modifications to be shared).
