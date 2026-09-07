@@ -1,0 +1,36 @@
+# Gitleaks configuration.
+#
+# The default ruleset is used in full — no detection rule is disabled. The
+# allowlist below only excludes directories that are git-ignored and therefore
+# can never be committed: installed third-party dependencies and build output.
+#
+# Rationale: `gitleaks dir` walks the filesystem, including git-ignored paths.
+# Scanning `server/.venv/` and `client/node_modules/` produces high-volume
+# false positives from vendored data files (e.g. the license-expression
+# package ships a licence database whose identifier strings trip the
+# generic-api-key entropy rule). Those files are not repository content.
+#
+# This narrows WHERE the scanner looks. It does not weaken WHAT it detects.
+# Repository source, configuration, documentation, and git history remain
+# fully scanned.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Git-ignored dependency and build directories (not repo content)"
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''(^|/)coverage/''',
+  '''(^|/)\.mypy_cache/''',
+  '''(^|/)\.ruff_cache/''',
+  '''(^|/)\.pytest_cache/''',
+  '''(^|/)\.git/''',
+]
+
+[[allowlists]]
+description = "Placeholder values in the committed environment template"
+paths = ['''(^|/)\.env\.example$''']

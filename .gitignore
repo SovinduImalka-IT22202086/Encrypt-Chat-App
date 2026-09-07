@@ -1,0 +1,93 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# NOTE: client/dist and server build output are covered by dist/ and build/
+# above. package-lock.json and requirements.txt are deliberately NOT ignored —
+# they are required for reproducible installs (Phase 1 exit gate).
+
+# ---------------------------------------------------------------------------
+# Secrets and environment (SUPPLY-004, no-secrets policy)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# Cryptographic material — must never be committed (CRYPTO-002, CRYPTO-008)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+secrets.json
+secrets.yaml
+secrets.yml
+
+# Certificates: public certs are usually safe, but private material is not.
+# Excluded by default; add specific public certs with `git add -f` after review.
+*.crt
+*.cer
+*.der
+
+# ---------------------------------------------------------------------------
+# Local databases and generated data
+# ---------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+data/
+*.dump
+*.sql.gz
+
+# ---------------------------------------------------------------------------
+# Logs, test output, temp files
+# ---------------------------------------------------------------------------
+*.log
+logs/
+test-results/
+playwright-report/
+.tmp/
+tmp/
+*.bak
+*.orig
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+desktop.ini
+.DS_Store
