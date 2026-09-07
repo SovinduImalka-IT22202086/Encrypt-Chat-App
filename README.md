@@ -6,7 +6,7 @@ against a threat model written before any code existed.
 
 **Release v0.1.0 — research prototype.**
 
-> **⚠️ This project has NOT been independently audited, and is not for real use.**
+> **⚠️ This project Implemented for Local Machine .**
 >
 > Phases 0–13 are complete: authentication, Ed25519 identity with manual
 > verification, authenticated X25519 key agreement, AES-256-GCM end-to-end
